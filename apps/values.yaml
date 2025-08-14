@@ -4,43 +4,64 @@
 apps:
   system:
     # CRDs
-    - name: cilium-crds
+    cilium-crds:
+      enabled: true
       namespace: system-cluster
-    - name: snapshot-crds
+    snapshot-crds:
+      enabled: true
       namespace: system-cluster
-    - name: cert-manager-crds
+    cert-manager-crds:
+      enabled: true
       namespace: system-cluster
-    - name: trust-manager-crds
+    trust-manager-crds:
+      enabled: true
       namespace: system-cluster
-    - name: gateway-api-crds
+    gateway-api-crds:
+      enabled: true
       namespace: system-cluster
-    - name: traefik-crds
+    traefik-crds:
+      enabled: true
       namespace: system-cluster
-    - name: argocd-crds
+    argocd-crds:
+      enabled: true
       namespace: system-cluster
-    - name: sealed-secrets-crds
+    sealed-secrets-crds:
+      enabled: true
       namespace: system-cluster
-    # TODO: - name: cluster-api-crds
-    - name: namespaces
+    # Apps
+    namespaces:
+      enabled: true
       namespace: system-cluster
-    - name: rbac
+    rbac:
+      enabled: true
       namespace: system-cluster
-    - name: cilium
+    cilium:
+      enabled: true
       namespace: system-cilium
-    - name: coredns
+    coredns:
+      enabled: true
       namespace: system-coredns
-    - name: snapshot
+    snapshot:
+      enabled: true
       namespace: system-snapshot
-    - name: argocd
-      namespace: system-argocd
-    - name: cert-manager
+    csi-aws-ebs:
+      enabled: false
+      namespace: system-csi-aws-ebs
+    cert-manager:
+      enabled: true
       namespace: system-cert-manager
-    - name: trust-manager
+    trust-manager:
+      enabled: true
       namespace: system-trust-manager
-    - name: traefik
+    traefik:
+      enabled: true
       namespace: system-traefik
-    - name: trust-bundles
+    trust-bundles:
+      enabled: true
       namespace: system-trust-bundles
-    - name: sealed-secrets
+    sealed-secrets:
+      enabled: true
       namespace: system-sealed-secrets
-    # TODO: - name: cluster-api
+    argocd:
+      enabled: true
+      namespace: system-argocd

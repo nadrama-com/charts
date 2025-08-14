@@ -1,26 +1,22 @@
 # Copyright 2025 Nadrama Pty Ltd
 # SPDX-License-Identifier: Apache-2.0
-{{ range .Values.apps.system }}
+{{ range $name, $app := .Values.apps.system }}
+{{ if $app.enabled }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: "{{ .name }}-app"
+  name: "{{ $name }}-app"
 spec:
   project: system
   source:
     repoURL: "https://github.com/nadrama-com/charts.git"
     targetRevision: "main" # 'production' in prod
-    path: "{{ .name }}"
+    path: "{{ $name }}"
     helm:
-      releaseName: "system-{{ .name }}"
-      skipCrds: {{ if .name | hasSuffix "-crds" }}false{{ else }}true{{ end }}
-      valuesObject:
-        nadrama:
-{{- toYaml $.Values.nadrama | nindent 10 }}
-        argo-cd:
-          global:
-            domain: {{ index $.Values "argo-cd" "global" "domain" }}
+      releaseName: "system-{{ $name }}"
+      skipCrds: {{ if $name | hasSuffix "-crds" }}false{{ else }}true{{ end }}
+      valuesObject: {{ if hasKey (index .Values.apps.system $name) "valuesObject" }}{{ index .Values.apps.system $name "valuesObject" }}{{ else }}{}{{ end }}
   syncPolicy:
     automated:
       prune: true
@@ -28,6 +24,6 @@ spec:
       selfHeal: true
   destination:
     server: https://kubernetes.default.svc
-    namespace: "{{ .namespace }}"
-
+    namespace: "{{ $app.namespace }}"
+{{ end }}
 {{ end }}

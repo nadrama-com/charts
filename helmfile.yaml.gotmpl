@@ -1,0 +1,392 @@
+repositories:
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: traefik
+    url: https://traefik.github.io/charts
+  - name: cilium
+    url: https://helm.cilium.io
+  - name: coredns
+    url: https://coredns.github.io/helm
+  - name: aws-ebs-csi-driver
+    url: https://kubernetes-sigs.github.io/aws-ebs-csi-driver
+  - name: sealed-secrets
+    url: https://bitnami-labs.github.io/sealed-secrets
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+  - name: piraeus
+    url: https://piraeus.io/helm-charts/
+
+values:
+  - _values/apps.yaml
+
+---
+
+{{- $crdCharts := list 
+  "cilium-crds" 
+  "snapshot-crds" 
+  "cert-manager-crds" 
+  "trust-manager-crds" 
+  "gateway-api-crds" 
+  "traefik-crds" 
+  "argocd-crds" 
+  "sealed-secrets-crds" }}
+
+{{- define "cert-manager.patches" }}
+      # Patch cert-manager webhooks to Ignore failure policy
+      - target:
+          apiVersion: admissionregistration.k8s.io/v1
+          kind: MutatingWebhookConfiguration
+          name: system-cert-manager-webhook
+        patch:
+        - op: replace
+          path: /webhooks/0/failurePolicy
+          value: Ignore
+      - target:
+          apiVersion: admissionregistration.k8s.io/v1
+          kind: ValidatingWebhookConfiguration
+          name: system-cert-manager-webhook
+        patch:
+        - op: replace
+          path: /webhooks/0/failurePolicy
+          value: Ignore
+      - target:
+          apiVersion: admissionregistration.k8s.io/v1
+          kind: ValidatingWebhookConfiguration
+          name: system-cert-manager-approver-policy
+        patch:
+        - op: replace
+          path: /webhooks/0/failurePolicy
+          value: Ignore
+{{- end }}
+
+{{- define "trust-manager.patches" }}
+      # Patch trust-manager webhooks to Ignore failure policy
+      - target:
+          apiVersion: admissionregistration.k8s.io/v1
+          kind: ValidatingWebhookConfiguration
+          name: system-trust-manager
+        patch:
+        - op: replace
+          path: /webhooks/0/failurePolicy
+          value: Ignore
+{{- end }}
+
+{{- if ne (env "HELMFILE_OFFLINE") "true" }}
+hooks:
+  - events: ["prepare"]
+    showlogs: true
+    command: "bash"
+    args: 
+      - "-c"
+      - |
+        # Patch kubernetes service for dual-stack networking
+        kubectl patch service kubernetes -n default --type='merge' -p='{"spec":{"ipFamilyPolicy":"PreferDualStack","ipFamilies":["IPv4","IPv6"],"clusterIPs":["198.18.0.1","fdc6::1"]}}'
+        # Label and annotate default namespace for Helm management
+        kubectl label namespace default app.kubernetes.io/managed-by=Helm --overwrite
+        kubectl annotate namespace default meta.helm.sh/release-name=system-namespaces meta.helm.sh/release-namespace=system-cluster --overwrite
+        # Create system-cluster namespace if it doesn't exist
+        kubectl create namespace system-cluster --dry-run=client -o yaml | kubectl apply -f -
+{{- end }}
+
+releases:
+  # CRDs
+
+{{- range $crdCharts }}
+{{- if index $.Values.apps.system . }}
+{{- if (index $.Values.apps.system .).enabled }}
+  - name: system-{{ . }}
+    chart: ./{{ . }}
+    namespace: system-cluster
+    labels:
+      type: crd
+    values:
+      - _values/{{ . }}.yaml
+{{- end }}
+{{- end }}
+{{- end }}
+
+  # Apps
+
+{{- if .Values.apps.system.namespaces.enabled }}
+  - name: system-namespaces
+    chart: ./namespaces
+    namespace: system-cluster
+    needs:
+{{- range $crdCharts }}
+{{- if index $.Values.apps.system . }}
+{{- if (index $.Values.apps.system .).enabled }}
+      - system-{{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+    labels:
+      type: app
+      tier: infrastructure
+    values:
+      - _values/namespaces.yaml
+{{- end }}
+
+{{- if .Values.apps.system.rbac.enabled }}
+  - name: system-rbac
+    chart: ./rbac
+    namespace: system-cluster
+    needs:
+{{- if .Values.apps.system.namespaces.enabled }}
+      - system-namespaces
+{{- end }}
+    labels:
+      type: app
+      tier: infrastructure
+    values:
+      - _values/rbac.yaml
+{{- end }}
+
+{{- if .Values.apps.system.cilium.enabled }}
+  - name: system-cilium
+    chart: ./cilium
+    namespace: system-cilium
+    needs:
+{{- if index .Values.apps.system "cilium-crds" }}
+{{- if (index .Values.apps.system "cilium-crds").enabled }}
+      - system-cilium-crds
+{{- end }}
+{{- end }}
+{{- if .Values.apps.system.namespaces.enabled }}
+      - system-namespaces
+{{- end }}
+    labels:
+      type: app
+    values:
+      - _values/cilium.yaml
+{{- end }}
+
+{{- if .Values.apps.system.coredns.enabled }}
+  - name: system-coredns
+    chart: ./coredns
+    namespace: system-coredns
+    needs:
+{{- if .Values.apps.system.cilium.enabled }}
+      - system-cilium
+{{- end }}
+    labels:
+      type: app
+    values:
+      - _values/coredns.yaml
+{{- end }}
+
+{{- if .Values.apps.system.snapshot.enabled }}
+  - name: system-snapshot
+    chart: ./snapshot
+    namespace: system-snapshot
+    needs:
+{{- if index .Values.apps.system "snapshot-crds" }}
+{{- if (index .Values.apps.system "snapshot-crds").enabled }}
+      - system-snapshot-crds
+{{- end }}
+{{- end }}
+{{- if .Values.apps.system.namespaces.enabled }}
+      - system-namespaces
+{{- end }}
+    labels:
+      type: app
+    values:
+      - _values/snapshot.yaml
+{{- end }}
+
+{{- if index .Values.apps.system "csi-aws-ebs" }}
+{{- if (index .Values.apps.system "csi-aws-ebs").enabled }}
+  - name: system-csi-aws-ebs
+    chart: ./csi-aws-ebs
+    namespace: system-csi-aws-ebs
+    needs:
+{{- if .Values.apps.system.snapshot.enabled }}
+      - system-snapshot
+{{- end }}
+    labels:
+      type: app
+    values:
+      - _values/csi-aws-ebs.yaml
+{{- end }}
+{{- end }}
+
+{{- if index .Values.apps.system "cert-manager" }}
+{{- if (index .Values.apps.system "cert-manager").enabled }}
+  - name: system-cert-manager
+    chart: ./cert-manager
+    namespace: system-cert-manager
+    needs:
+{{- if index .Values.apps.system "cert-manager-crds" }}
+{{- if (index .Values.apps.system "cert-manager-crds").enabled }}
+      - system-cert-manager-crds
+{{- end }}
+{{- end }}
+{{- if .Values.apps.system.namespaces.enabled }}
+      - system-namespaces
+{{- end }}
+    labels:
+      type: app
+    values:
+      - _values/cert-manager.yaml
+{{- end }}
+{{- end }}
+
+{{- if index .Values.apps.system "trust-manager" }}
+{{- if (index .Values.apps.system "trust-manager").enabled }}
+  - name: system-trust-manager
+    chart: ./trust-manager
+    namespace: system-trust-manager
+    needs:
+{{- if index .Values.apps.system "trust-manager-crds" }}
+{{- if (index .Values.apps.system "trust-manager-crds").enabled }}
+      - system-trust-manager-crds
+{{- end }}
+{{- end }}
+{{- if index .Values.apps.system "cert-manager" }}
+{{- if (index .Values.apps.system "cert-manager").enabled }}
+      - system-cert-manager
+{{- end }}
+{{- end }}
+    labels:
+      type: app
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "./trust-manager/pre-install.sh"
+{{- if eq (env "FORCE_NO_HOOKS") "true" }}
+    jsonPatches:
+{{- include "cert-manager.patches" . | nindent 6 }}
+{{- end }}
+    values:
+      - _values/trust-manager.yaml
+{{- end }}
+{{- end }}
+
+{{- if .Values.apps.system.traefik.enabled }}
+  - name: system-traefik
+    chart: ./traefik
+    namespace: system-traefik
+    needs:
+{{- if index .Values.apps.system "traefik-crds" }}
+{{- if (index .Values.apps.system "traefik-crds").enabled }}
+      - system-traefik-crds
+{{- end }}
+{{- end }}
+{{- if index .Values.apps.system "cert-manager" }}
+{{- if (index .Values.apps.system "cert-manager").enabled }}
+      - system-cert-manager
+{{- end }}
+{{- end }}
+    labels:
+      type: app
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "./traefik/pre-install.sh"
+    values:
+      - _values/traefik.yaml
+{{- end }}
+
+{{- if index .Values.apps.system "trust-bundles" }}
+{{- if (index .Values.apps.system "trust-bundles").enabled }}
+  - name: system-trust-bundles
+    chart: ./trust-bundles
+    namespace: system-trust-bundles
+    needs:
+{{- if index .Values.apps.system "trust-manager" }}
+{{- if (index .Values.apps.system "trust-manager").enabled }}
+      - system-trust-manager
+{{- end }}
+{{- end }}
+    labels:
+      type: app
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "./trust-bundles/pre-install.sh"
+{{- if eq (env "FORCE_NO_HOOKS") "true" }}
+    jsonPatches:
+{{- include "trust-manager.patches" . | nindent 6 }}
+{{- end }}
+    values:
+      - _values/trust-bundles.yaml
+{{- end }}
+{{- end }}
+
+{{- if index .Values.apps.system "sealed-secrets" }}
+{{- if (index .Values.apps.system "sealed-secrets").enabled }}
+  - name: system-sealed-secrets
+    chart: ./sealed-secrets
+    namespace: system-sealed-secrets
+    needs:
+{{- if index .Values.apps.system "sealed-secrets-crds" }}
+{{- if (index .Values.apps.system "sealed-secrets-crds").enabled }}
+      - system-sealed-secrets-crds
+{{- end }}
+{{- end }}
+{{- if .Values.apps.system.namespaces.enabled }}
+      - system-namespaces
+{{- end }}
+    labels:
+      type: app
+    values:
+      - _values/sealed-secrets.yaml
+{{- end }}
+{{- end }}
+
+{{- if .Values.apps.system.argocd.enabled }}
+  - name: system-argocd
+    chart: ./argocd
+    namespace: system-argocd
+    needs:
+{{- if index .Values.apps.system "argocd-crds" }}
+{{- if (index .Values.apps.system "argocd-crds").enabled }}
+      - system-argocd-crds
+{{- end }}
+{{- end }}
+{{- if index .Values.apps.system "cert-manager" }}
+{{- if (index .Values.apps.system "cert-manager").enabled }}
+      - system-cert-manager
+{{- end }}
+{{- end }}
+{{- if .Values.apps.system.traefik.enabled }}
+      - system-traefik
+{{- end }}
+    labels:
+      type: app
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "./argocd/pre-install.sh"
+{{- if eq (env "FORCE_NO_HOOKS") "true" }}
+    jsonPatches:
+{{- include "cert-manager.patches" . | nindent 6 }}
+{{- end }}
+    values:
+      - _values/argocd.yaml
+{{- end }}
+
+{{- if .Values.apps.system.apps.enabled }}
+  - name: system-apps
+    chart: ./apps
+    namespace: system-apps
+    needs:
+{{- if .Values.apps.system.argocd.enabled }}
+      - system-argocd
+{{- end }}
+{{- if index .Values.apps.system "sealed-secrets" }}
+{{- if (index .Values.apps.system "sealed-secrets").enabled }}
+      - system-sealed-secrets
+{{- end }}
+{{- end }}
+    labels:
+      type: app
+    set:
+{{- range $name, $app := .Values.apps.system }}
+{{- if $app.enabled }}
+      - name: "apps.system.{{ $name }}.valuesObject"
+        file: "_values/{{ $name }}.yaml"
+{{- end }}
+{{- end }}
+    values:
+      - _values/apps.yaml
+{{- end }}
